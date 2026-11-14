@@ -1,0 +1,410 @@
+local EmeraldField = loadstring(game:HttpGet("https://raw.githubusercontent.com/vtdatj-cmyk/UiLibraly/refs/heads/main/StudsUiBeta"))()
+
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
+
+local Controllers = LocalPlayer:WaitForChild("PlayerScripts"):WaitForChild("Client"):WaitForChild("Controllers")
+local Remotes = require(ReplicatedStorage.Shared.Remotes)
+local RigDresser = require(ReplicatedStorage.Shared.RigDresser)
+
+local function safeRequire(mod)
+    local ok, res = pcall(require, mod)
+    return ok and res or nil
+end
+
+local ClientState = safeRequire(Controllers:FindFirstChild("ClientState"))
+local Movement = safeRequire(Controllers:FindFirstChild("Movement"))
+local CameraRig = safeRequire(Controllers:FindFirstChild("CameraRig"))
+local HUDController = safeRequire(Controllers:FindFirstChild("HUDController"))
+local ScreenFX = safeRequire(Controllers:FindFirstChild("ScreenFX"))
+local FogController = safeRequire(Controllers:FindFirstChild("FogController"))
+local SuperThrow = safeRequire(Controllers:FindFirstChild("SuperThrow"))
+local DataController = safeRequire(Controllers:FindFirstChild("DataController"))
+local BalanceCurve = safeRequire(ReplicatedStorage.Shared.BalanceCurve)
+local FoodsConfig = safeRequire(ReplicatedStorage.Config.FoodsConfig)
+
+-- Chặn hoàn toàn các hàm tạo màn hình đen gốc của game
+if ScreenFX then
+    pcall(function()
+        if type(ScreenFX) == "table" then
+            ScreenFX.Cover = function() end
+            ScreenFX.FadeIn = function() end
+            ScreenFX.FadeOut = function() end
+            ScreenFX.Reset = function() end
+        end
+    end)
+end
+
+local Window = EmeraldField:CreateWindow({
+    Name = "Phúc Cuteo dệp chai ",
+    Subtitle = "Throw & Training Sync (Optimized)"
+})
+
+local MainTab = Window:CreateTab("Auto Farm")
+MainTab:CreateSection("Main Controls")
+
+local autoRunning = false
+local autoTraining = false
+local autoTrainingBonus = false
+local throwResolveValue = 20 
+local trainingDelayTime = 2 
+local targetPos = Vector3.new(-0.5, 50, -34)
+
+local function instantTeleport(destinationCFrame)
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum then return false end
+
+    hum.PlatformStand = false
+    hum.Sit = false
+    hrp.Anchored = false
+
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    hrp.AssemblyAngularVelocity = Vector3.zero
+    hrp.CFrame = destinationCFrame
+
+    return true
+end
+
+local function executeTrainingSequence()
+    local localProps = workspace:FindFirstChild("LocalPlotProps")
+    local targetPart = localProps and localProps:FindFirstChild("TrainingArea")
+
+    if targetPart then
+        local targetCFrame
+        if targetPart:IsA("BasePart") then
+            targetCFrame = targetPart.CFrame + Vector3.new(0, 3, 0)
+        elseif targetPart:IsA("Model") and targetPart.PrimaryPart then
+            targetCFrame = targetPart:GetPrimaryPartCFrame() + Vector3.new(0, 3, 0)
+        else
+            local firstPart = targetPart:FindFirstChildWhichIsA("BasePart", true)
+            if firstPart then
+                targetCFrame = firstPart.CFrame + Vector3.new(0, 3, 0)
+            end
+        end
+
+        if targetCFrame then
+            local char = LocalPlayer.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if hrp and (hrp.Position - targetCFrame.Position).Magnitude > 2 then
+                instantTeleport(targetCFrame)
+            end
+        end
+    end
+
+    if not ClientState or ClientState.Busy ~= "Training" then
+        pcall(function()
+            Remotes.Invoke("Training_Start")
+        end)
+    end
+end
+
+MainTab:CreateToggle({
+    Name = "Auto Farm",
+    CurrentValue = false,
+    Callback = function(Value)
+        autoRunning = Value
+        if autoRunning then
+            Window:Notify({
+                Title = "Auto Farm",
+                Content = "Auto Farm Enabled (Optimized)",
+                Duration = 2.5
+            })
+            task.spawn(function()
+                while autoRunning do
+                    pcall(function()
+                        local char = LocalPlayer.Character
+                        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+
+                        if autoTraining and ClientState and ClientState.Busy == "Training" then
+                            pcall(function() Remotes.Invoke("Training_Stop") end)
+                            task.wait(0.1)
+                        end
+
+                        if hrp then
+                            if (hrp.Position - targetPos).Magnitude > 1.5 then
+                                instantTeleport(CFrame.new(targetPos))
+                            end
+
+                            local startResult = Remotes.Invoke("Throw_Start")
+                            if startResult and startResult.Ok then
+                                local resolveResult = Remotes.Invoke("Throw_Resolve", throwResolveValue)
+
+                                if resolveResult and resolveResult.Ok then
+                                    pcall(function() Remotes.Invoke("Throw_Complete") end)
+                                end
+
+                                if autoTraining then
+                                    executeTrainingSequence()
+                                    local waitStart = os.clock()
+                                    while autoRunning and autoTraining and os.clock() - waitStart < trainingDelayTime do
+                                        task.wait(0.2)
+                                    end
+                                end
+                            else
+                                pcall(function() Remotes.Invoke("Throw_Cancel") end)
+                            end
+                        end
+                    end)
+                    task.wait(0.2) -- Tăng độ trễ nhẹ giúp game mượt mà, không bị tràn luồng
+                end
+            end)
+        else
+            Window:Notify({
+                Title = "Auto Farm",
+                Content = "Auto Farm Disabled",
+                Duration = 2.5
+            })
+        end
+    end
+})
+
+MainTab:CreateToggle({
+    Name = "Auto Training",
+    CurrentValue = false,
+    Callback = function(Value)
+        autoTraining = Value
+        if autoTraining then
+            Window:Notify({
+                Title = "Auto Training",
+                Content = "Auto Training Enabled",
+                Duration = 2.5
+            })
+
+            task.spawn(function()
+                while autoTraining do
+                    if not autoRunning then
+                        pcall(function()
+                            executeTrainingSequence()
+                        end)
+                    end
+                    task.wait(1) -- Giảm tần suất gọi lệnh lặp
+                end
+            end)
+        else
+            pcall(function()
+                Remotes.Invoke("Training_Stop")
+            end)
+            Window:Notify({
+                Title = "Auto Training",
+                Content = "Auto Training Disabled",
+                Duration = 2.5
+            })
+        end
+    end
+})
+
+MainTab:CreateToggle({
+    Name = "Auto Training Bonus",
+    CurrentValue = false,
+    Callback = function(Value)
+        autoTrainingBonus = Value
+        if autoTrainingBonus then
+            Window:Notify({Title = "Training Bonus", Content = "Auto Training Bonus Enabled", Duration = 2.5})
+            task.spawn(function()
+                while autoTrainingBonus do
+                    pcall(function()
+                        local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+                        if playerGui then
+                            local trainingSequence = playerGui:FindFirstChild("TrainingSequence")
+                            if trainingSequence then
+                                local tapBonus = trainingSequence:FindFirstChild("TapBonusLayer", true)
+                                if tapBonus then
+                                    for _, btn in ipairs(tapBonus:GetChildren()) do
+                                        if btn:IsA("ImageButton") and btn.Visible then
+                                            pcall(function()
+                                                Remotes.Invoke("Training_TapBonus", 1)
+                                            end)
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end)
+                    task.wait(0.5) -- Tối ưu thời gian quét tap bonus để không gây nặng máy
+                end
+            end)
+        else
+            Window:Notify({Title = "Training Bonus", Content = "Auto Training Bonus Disabled", Duration = 2.5})
+        end
+    end
+})
+
+MainTab:CreateSlider({
+    Name = "Training Rest Time (Delay)",
+    Range = {2, 10},
+    Increment = 1,
+    CurrentValue = 2,
+    Flag = "TrainingDelaySlider",
+    Callback = function(Value)
+        trainingDelayTime = Value
+    end
+})
+
+MainTab:CreateSlider({
+    Name = "Throw_Resolve Force",
+    Range = {0, 20},
+    Increment = 1,
+    CurrentValue = 20,
+    Flag = "ThrowResolveSlider",
+    Callback = function(Value)
+        throwResolveValue = Value
+    end
+})
+
+local ExtraTab = Window:CreateTab("Extra Features")
+ExtraTab:CreateSection("Upgrades & Shop")
+
+local autoUpgradeStand = false
+local autoUpgradeFence = false
+local autoBuyShop = false
+local autoEquipPlot = false
+
+local function getPlayerMoney()
+    local success, money = pcall(function()
+        if DataController and DataController.Get then
+            local m = DataController:Get("Money") or DataController:Get("Cash") or DataController:Get("Coins")
+            if m then return m end
+        end
+        if LocalPlayer:FindFirstChild("leaderstats") then
+            local stat = LocalPlayer.leaderstats:FindFirstChild("Money") or LocalPlayer.leaderstats:FindFirstChild("Cash") or LocalPlayer.leaderstats:FindFirstChild("Coins")
+            if stat then return stat.Value end
+        end
+        return 0
+    end)
+    return success and money or 0
+end
+
+ExtraTab:CreateToggle({
+    Name = "Auto Stand Upgrade",
+    CurrentValue = false,
+    Callback = function(Value)
+        autoUpgradeStand = Value
+        if autoUpgradeStand then
+            Window:Notify({Title = "Auto Upgrade", Content = "Auto Stand Upgrade Enabled", Duration = 2.5})
+            task.spawn(function()
+                while autoUpgradeStand do
+                    pcall(function()
+                        local event = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("Stand_Upgrade")
+                        if event then
+                            event:InvokeServer()
+                        end
+                    end)
+                    task.wait(5)
+                end
+            end)
+        else
+            Window:Notify({Title = "Auto Upgrade", Content = "Auto Stand Upgrade Disabled", Duration = 2.5})
+        end
+    end
+})
+
+ExtraTab:CreateToggle({
+    Name = "Auto Upgrade Fence",
+    CurrentValue = false,
+    Callback = function(Value)
+        autoUpgradeFence = Value
+        if autoUpgradeFence then
+            Window:Notify({Title = "Auto Fence", Content = "Auto Upgrade Fence Enabled", Duration = 2.5})
+            task.spawn(function()
+                while autoUpgradeFence do
+                    pcall(function()
+                        local event = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("Plot_UpgradeFence")
+                        if event then
+                            event:InvokeServer()
+                        end
+                    end)
+                    task.wait(5)
+                end
+            end)
+        else
+            Window:Notify({Title = "Auto Fence", Content = "Auto Upgrade Fence Disabled", Duration = 2.5})
+        end
+    end
+})
+
+ExtraTab:CreateToggle({
+    Name = "Auto Buy Food",
+    CurrentValue = false,
+    Callback = function(Value)
+        autoBuyShop = Value
+        if autoBuyShop then
+            Window:Notify({Title = "Auto Shop", Content = "Auto Shop Buy Enabled", Duration = 2.5})
+            task.spawn(function()
+                while autoBuyShop do
+                    pcall(function()
+                        local shopEvent = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("Shop_Buy")
+                        if shopEvent and FoodsConfig and BalanceCurve then
+                            local currentMoney = getPlayerMoney()
+                            for i = 1, FoodsConfig.CountAll() do
+                                if not autoBuyShop then break end
+                                local foodData = FoodsConfig.GetAny(i)
+                                if foodData then
+                                    local isOwned = false
+                                    if DataController and DataController.GetPath then
+                                        isOwned = DataController:GetPath("OwnedFoods." .. foodData.Index) == true
+                                    end
+                                    if not isOwned then
+                                        local itemPrice = BalanceCurve.GetItemPrice(LocalPlayer, foodData)
+                                        if itemPrice and currentMoney >= itemPrice then
+                                            shopEvent:InvokeServer(i)
+                                            currentMoney = currentMoney - itemPrice
+                                            task.wait(0.5)
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end)
+                    task.wait(5)
+                end
+            end)
+        else
+            Window:Notify({Title = "Auto Shop", Content = "Auto Shop Buy Disabled", Duration = 2.5})
+        end
+    end
+})
+
+ExtraTab:CreateToggle({
+    Name = "Auto Equip Best",
+    CurrentValue = false,
+    Callback = function(Value)
+        autoEquipPlot = Value
+        if autoEquipPlot then
+            Window:Notify({Title = "Auto Plot", Content = "Auto Equip Best Enabled", Duration = 2.5})
+            task.spawn(function()
+                while autoEquipPlot do
+                    pcall(function()
+                        local event = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("Plot_EquipBest")
+                        if event then
+                            event:InvokeServer()
+                        end
+                    end)
+                    task.wait(120)
+                end
+            end)
+        else
+            Window:Notify({Title = "Auto Plot", Content = "Auto Equip Best Disabled", Duration = 2.5})
+        end
+    end
+})
+
+ExtraTab:CreateButton({
+    Name = "Claim Offline",
+    Callback = function()
+        local success = pcall(function()
+            local event = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("Offline_Claim")
+            if event then
+                event:InvokeServer()
+            end
+        end)
+        Window:Notify({
+            Title = "Offline Reward",
+            Content = success and "Claimed Offline Reward!" or "Failed to Claim",
+            Duration = 2.5
+        })
+    end
+})
